@@ -1,0 +1,35 @@
+# Copie déployée dans rydip/taches-nuit/.github/workflows/actualisations.yml.
+# Le cron du dépôt privé reste éteint ; ce job a son propre budget de durée.
+name: actualisations
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actualisations
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.DEPOT }}
+          token: ${{ secrets.JETON }}
+          ref: codex/refonte-design-prixma
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -q curl-cffi python-dotenv
+      - name: run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: bash outils/actualiser_promos.sh
