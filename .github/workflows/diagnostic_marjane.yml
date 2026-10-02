@@ -69,7 +69,7 @@ jobs:
 
           # Texte de la page de refus, et autres adresses Marjane.
           r = requests.post(AUTH, json=corps, impersonate='firefox135', timeout=30)
-          texte = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', re.sub(r'(?s)<(script|style).*?</>', ' ', r.text)))
+          texte = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', re.sub(r'(?s)<(script|style).*?</\1>', ' ', r.text)))
           for i in range(0, min(len(texte), 900), 180):
               print(f"::notice::page {i // 180} : {texte[i:i + 180]}")
           print(f"::notice::entetes : server={r.headers.get('server')} cf-ray={r.headers.get('cf-ray')} cf-mitigated={r.headers.get('cf-mitigated')}")
