@@ -1,0 +1,68 @@
+# Diagnostic : Marjane répond-elle depuis un runner GitHub, en direct,
+# par Cloudflare WARP ou par Tor ? Aucun secret, aucune écriture.
+# Les résultats sortent en annotations, lisibles par l'API publique.
+name: diagnostic-marjane
+
+on:
+  push:
+    paths: ['.github/workflows/diagnostic_marjane.yml']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -q curl-cffi
+
+      - name: warp
+        continue-on-error: true
+        run: |
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq cloudflare-warp > /dev/null
+          sleep 3
+          warp-cli --accept-tos registration new
+          warp-cli --accept-tos mode proxy
+          warp-cli --accept-tos connect
+          sleep 8
+          warp-cli --accept-tos status
+
+      - name: tor
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y -qq tor > /dev/null
+          sudo systemctl start tor || true
+          sleep 20
+
+      - name: mesurer
+        shell: python
+        run: |
+          import re
+          from curl_cffi import requests
+          AUTH = 'https://api-ayaline.marjane.ma/auth/authenticate'
+          corps = {'username': 'diagnostic', 'password': 'diagnostic', 'context': 'public_api'}
+          voies = {'direct': None, 'warp': 'socks5h://127.0.0.1:40000', 'tor': 'socks5h://127.0.0.1:9050'}
+          for voie, proxy in voies.items():
+              px = {'http': proxy, 'https': proxy} if proxy else None
+              try:
+                  t = requests.get('https://www.cloudflare.com/cdn-cgi/trace', proxies=px, timeout=20).text
+                  info = dict(l.split('=', 1) for l in t.splitlines() if '=' in l)
+                  ou = f"loc={info.get('loc')} warp={info.get('warp')}"
+              except Exception as e:
+                  print(f"::notice::{voie} : pas de connexion ({str(e)[:80]})")
+                  continue
+              for emp in ('firefox135', 'safari18_0', 'chrome'):
+                  try:
+                      r = requests.post(AUTH, json=corps, impersonate=emp, proxies=px, timeout=30)
+                      titre = re.search(r'<title>([^<]{0,60})', r.text)
+                      quoi = titre.group(1) if titre else r.text[:60].replace('\n', ' ')
+                      print(f"::notice::{voie} ({ou}) {emp} : HTTP {r.status_code} {quoi}")
+                  except Exception as e:
+                      print(f"::notice::{voie} {emp} : erreur {str(e)[:100]}")
