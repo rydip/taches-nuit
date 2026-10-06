@@ -23,7 +23,7 @@ jobs:
         with:
           repository: ${{ secrets.DEPOT }}
           token: ${{ secrets.JETON }}
-          ref: codex/refonte-design-prixma
+          ref: main
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
