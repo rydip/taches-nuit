@@ -33,13 +33,18 @@ jobs:
       - name: sortie par le telephone
         run: |
           # Premier appareil du réseau proposé comme sortie internet.
-          sortie=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption) | .HostName][0] // empty')
+          # Par son adresse Tailscale : le nom d'appareil porte des espaces.
+          sortie=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption) | .TailscaleIPs[0]][0] // empty')
+          nom=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption) | .HostName][0] // empty')
           if [ -z "$sortie" ]; then
             echo "::error::aucune sortie internet visible : le téléphone est-il en ligne et validé ?"
             exit 1
           fi
-          echo "::notice::sortie : $sortie"
-          sudo tailscale set --exit-node="$sortie"
+          echo "::notice::sortie : $nom ($sortie)"
+          if ! err=$(sudo tailscale set --exit-node="$sortie" 2>&1); then
+            echo "::error::tailscale set : ${err:0:200}"
+            exit 1
+          fi
           sleep 5
 
       - name: mesurer
