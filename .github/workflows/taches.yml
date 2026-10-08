@@ -47,7 +47,9 @@ jobs:
   # de 403. Job séparé : Aswak et Carrefour ne passent pas par le téléphone.
   marjane:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 150 : omni ~27 min + prix 7-18 + promos un magasin a la fois ~26 + relecture
+    # et reconfirmation, mesure du 8 octobre 2026 ; marge pour la latence du telephone.
+    timeout-minutes: 150
     concurrency:
       group: marjane
       cancel-in-progress: false
