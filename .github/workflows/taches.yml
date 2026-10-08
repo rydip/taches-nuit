@@ -40,3 +40,56 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/taches.yml/enable" > /dev/null
+
+  # Marjane bloque les serveurs GitHub (403 « Access Restricted » depuis le
+  # 27 septembre 2026). Ce job sort par le téléphone d'Anass au Maroc
+  # (Tailscale, sortie internet) : essai du 8 octobre, pays MA, 401 au lieu
+  # de 403. Job séparé : Aswak et Carrefour ne passent pas par le téléphone.
+  marjane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.DEPOT }}
+          token: ${{ secrets.JETON }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -q -r requirements.txt > /dev/null
+
+      - name: tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: sortie par le telephone
+        run: |
+          # Par son adresse Tailscale : le nom d'appareil porte des espaces.
+          sortie=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption) | .TailscaleIPs[0]][0] // empty')
+          if [ -z "$sortie" ]; then
+            echo "::error::téléphone absent : allumé, Tailscale connecté, « Run as exit node » actif ?"
+            exit 1
+          fi
+          if ! err=$(sudo tailscale set --exit-node="$sortie" 2>&1); then
+            echo "::error::tailscale set : ${err:0:200}"
+            exit 1
+          fi
+          sleep 5
+
+      - name: run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: bash outils/marjane_nuit.sh
+
+      - name: volume par le telephone
+        if: always()
+        run: |
+          tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption)][0] // empty
+            | "::notice::par le téléphone : reçu \((.RxBytes // 0) / 1048576 | floor) Mo, envoyé \((.TxBytes // 0) / 1048576 | floor) Mo"' || true
