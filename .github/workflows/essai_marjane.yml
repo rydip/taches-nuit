@@ -1,6 +1,7 @@
-# Lancement d'essai ou manuel du relevé Marjane par le téléphone (Tailscale),
-# hors de la synchro de nuit. Même contenu que le job `marjane` de taches.yml :
-# si l'un change, changer l'autre.
+# Essai PARTIEL du relevé Marjane par le téléphone (Tailscale), en lecture
+# seule : sortie au Maroc, jeton, 3 pages du catalogue omni, promos d'un
+# magasin sans publier. Aucune écriture en base. Le relevé complet est le
+# job `marjane` de taches.yml.
 name: essai-marjane
 
 on:
@@ -18,7 +19,7 @@ concurrency:
 jobs:
   marjane:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -53,11 +54,59 @@ jobs:
           fi
           sleep 5
 
-      - name: run
+      - name: essai
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: bash outils/marjane_nuit.sh
+        shell: bash
+        run: |
+          # Lecture seule : aucune écriture en base, rien publié. Chaque
+          # commande est notée ok ou ECHEC ; l'étape échoue à la fin si l'une
+          # d'elles a échoué. Aucune sortie brute n'est affichée.
+          echec=0
+
+          # 1. Pays de sortie.
+          if pays=$(python -c "from curl_cffi import requests; r = requests.get('https://www.cloudflare.com/cdn-cgi/trace', impersonate='chrome', timeout=30); r.raise_for_status(); print([l for l in r.text.splitlines() if l.startswith('loc=')][0][4:])" 2>/tmp/pays.err) && [ -n "$pays" ]; then
+            echo "::notice::pays : $pays"
+          else
+            echo "::notice::pays : ECHEC $(tail -n 1 /tmp/pays.err | cut -c1-150)"
+            echec=1
+          fi
+
+          # 2. Jeton (forcé).
+          if python -m scraper.jeton --force > /tmp/jeton.txt 2>&1; then
+            echo "::notice::jeton : ok $(grep -i -m 1 'validite' /tmp/jeton.txt | cut -c1-200)"
+          else
+            echo "::notice::jeton : ECHEC $(tail -n 1 /tmp/jeton.txt | cut -c1-150)"
+            echec=1
+          fi
+
+          # 3. Catalogue omni, 3 pages.
+          debut=$(date +%s)
+          if python -m sondes.lister_omni_marjane --sortie /tmp/omni.jsonl --max-pages 3 > /tmp/omni.txt 2>&1; then
+            duree=$(( $(date +%s) - debut ))
+            lignes=$(cat /tmp/omni.jsonl 2>/dev/null | wc -l)
+            echo "::notice::omni : $lignes lignes en $duree s"
+          else
+            echo "::notice::omni : ECHEC $(tail -n 1 /tmp/omni.txt | cut -c1-150)"
+            echec=1
+          fi
+
+          # 4. Promos d'un magasin, sans --publier.
+          debut=$(date +%s)
+          if python -u -m scraper.promos_locales --enseigne Marjane --sources marjane-2 > /tmp/promos.txt 2>&1; then
+            duree=$(( $(date +%s) - debut ))
+            ligne=$(grep -m 1 'promos vérifiées' /tmp/promos.txt | cut -c1-200)
+            echo "::notice::promos : ok en $duree s. ${ligne:-ligne « promos vérifiées » absente}"
+          else
+            echo "::notice::promos : ECHEC $(tail -n 1 /tmp/promos.txt | cut -c1-150)"
+            echec=1
+          fi
+
+          if [ "$echec" -ne 0 ]; then
+            echo "::error::essai partiel : au moins une commande a échoué (voir les notices)"
+            exit 1
+          fi
 
       - name: volume par le telephone
         if: always()
