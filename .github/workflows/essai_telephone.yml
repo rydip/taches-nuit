@@ -1,0 +1,62 @@
+# Essai : Marjane répond-elle quand le runner sort par le téléphone (Tailscale,
+# sortie internet au Maroc) ? Aucun secret du projet, aucune écriture : un
+# identifiant factice, seule compte la nature du refus (page « Access
+# Restricted » = bloqué ; erreur d'identifiants = passé).
+# Les résultats sortent en annotations, lisibles par l'API publique.
+name: essai-telephone
+
+on:
+  push:
+    paths: ['.github/workflows/essai_telephone.yml']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -q curl-cffi
+
+      - name: tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: sortie par le telephone
+        run: |
+          # Premier appareil du réseau proposé comme sortie internet.
+          sortie=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption) | .HostName][0] // empty')
+          if [ -z "$sortie" ]; then
+            echo "::error::aucune sortie internet visible : le téléphone est-il en ligne et validé ?"
+            exit 1
+          fi
+          echo "::notice::sortie : $sortie"
+          sudo tailscale set --exit-node="$sortie"
+          sleep 5
+
+      - name: mesurer
+        shell: python
+        run: |
+          import re, time
+          from curl_cffi import requests
+          AUTH = 'https://api-ayaline.marjane.ma/auth/authenticate'
+          corps = {'username': 'diagnostic', 'password': 'diagnostic', 'context': 'public_api'}
+          t = requests.get('https://www.cloudflare.com/cdn-cgi/trace', timeout=20).text
+          info = dict(l.split('=', 1) for l in t.splitlines() if '=' in l)
+          print(f"::notice::pays vu par Cloudflare : {info.get('loc')}")
+          for emp in ('firefox135', 'safari18_0'):
+              debut = time.time()
+              r = requests.post(AUTH, json=corps, impersonate=emp, timeout=30)
+              titre = re.search(r'<title>([^<]{0,60})', r.text)
+              quoi = titre.group(1) if titre else r.text[:80].replace('\n', ' ')
+              bloque = 'Access Restricted' in r.text
+              print(f"::notice::{emp} : HTTP {r.status_code} {'BLOQUE' if bloque else 'PASSE'} "
+                    f"({time.time() - debut:.1f} s) {quoi}")
