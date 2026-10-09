@@ -1,0 +1,63 @@
+name: diagnostic-promos-marjane
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+
+  marjane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: marjane
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.DEPOT }}
+          token: ${{ secrets.JETON }}
+          ref: main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -q -r requirements.txt > /dev/null
+      - name: tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      - name: sortie par le telephone
+        run: |
+          sorties=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption and .Online) | .TailscaleIPs[0]] | join(" ")')
+          read -ra candidats <<< "$sorties"
+          if [ "${#candidats[@]}" -ne 1 ]; then
+            echo "::error::une seule sortie en ligne requise : téléphone connecté à Tailscale"
+            exit 1
+          fi
+          if ! err=$(sudo tailscale set --exit-node="${candidats[0]}" 2>&1); then
+            echo "::error::tailscale set : ${err:0:200}"
+            exit 1
+          fi
+          sleep 5
+      - name: vérifier la progression publique sans journal détaillé
+        run: |
+          PRIXMA_PROGRESS_FD=3 python -c "from scraper.promos_locales import progression_marjane; progression_marjane(test_fd=3)" 3>&1 >/tmp/progression-privee.txt 2>&1
+          test ! -s /tmp/progression-privee.txt
+      - name: run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python -u -m sondes.diagnostic_promos_marjane --catalogues --sortie /tmp/diagnostic-promos.json
+      - name: volume par le telephone
+        if: always()
+        run: |
+          tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption)][0] // empty
+            | "::notice::par le téléphone : reçu \((.RxBytes // 0) / 1048576 | floor) Mo, envoyé \((.TxBytes // 0) / 1048576 | floor) Mo"' || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostic-promos-marjane
+          path: /tmp/diagnostic-promos.json
