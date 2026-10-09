@@ -1,6 +1,11 @@
 name: diagnostic-promos-marjane
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      publier:
+        description: 'Réparer les deux snapshots après diagnostic, sans toucher aux autres magasins'
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -47,9 +52,15 @@ jobs:
           test ! -s /tmp/progression-privee.txt
       - name: run
         env:
+          PUBLIER: ${{ inputs.publier }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python -u -m sondes.diagnostic_promos_marjane --catalogues --sortie /tmp/diagnostic-promos.json
+        run: |
+          if [ "$PUBLIER" = true ]; then
+            python -u -m sondes.diagnostic_promos_marjane --publier --sortie /tmp/diagnostic-promos.json
+          else
+            python -u -m sondes.diagnostic_promos_marjane --catalogues --sortie /tmp/diagnostic-promos.json
+          fi
       - name: volume par le telephone
         if: always()
         run: |
