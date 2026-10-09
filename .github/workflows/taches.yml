@@ -2,10 +2,12 @@ name: taches
 
 on:
   schedule:
-    - cron: "0 4 * * *"
+    # Contrôle horaire : les sources ne sont lues qu'entre 00 h et 03 h au Maroc.
+    - cron: '17 * * * *'
   workflow_dispatch: {}
 
 permissions:
+  contents: read
   actions: write
 
 concurrency:
@@ -13,7 +15,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  garde:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.nuit.outputs.run }}
+      marjane: ${{ steps.nuit.outputs.marjane }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: fenetre et historique
+        id: nuit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/garde_nuit.py --workflow taches.yml --jobs run marjane
+
   run:
+    needs: garde
+    if: needs.garde.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 100
     steps:
@@ -21,6 +39,7 @@ jobs:
         with:
           repository: ${{ secrets.DEPOT }}
           token: ${{ secrets.JETON }}
+          ref: main
 
       - uses: actions/setup-python@v6
         with:
@@ -29,7 +48,21 @@ jobs:
 
       - run: pip install -q -r requirements.txt > /dev/null
 
+      # Revérifier l'heure après l'attente d'un runner ou du groupe marjane.
+      - name: heure avant releve
+        id: heure
+        run: |
+          python - <<'PY'
+          from datetime import datetime
+          import os
+          from zoneinfo import ZoneInfo
+          autorise = datetime.now(ZoneInfo('Africa/Casablanca')).hour < 3
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('autorise=' + str(autorise).lower() + '\n')
+          print('nuit autorisee' if autorise else 'trop tard : aucun releve')
+          PY
       - name: run
+        if: steps.heure.outputs.autorise == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -46,6 +79,8 @@ jobs:
   # (Tailscale, sortie internet) : essai du 8 octobre, pays MA, 401 au lieu
   # de 403. Job séparé : Aswak et Carrefour ne passent pas par le téléphone.
   marjane:
+    needs: garde
+    if: needs.garde.outputs.marjane == 'true'
     runs-on: ubuntu-latest
     # 150 : omni ~27 min + prix 7-18 + promos un magasin a la fois ~26 + relecture
     # et reconfirmation, mesure du 8 octobre 2026 ; marge pour la latence du telephone.
@@ -58,6 +93,7 @@ jobs:
         with:
           repository: ${{ secrets.DEPOT }}
           token: ${{ secrets.JETON }}
+          ref: main
 
       - uses: actions/setup-python@v6
         with:
@@ -76,7 +112,14 @@ jobs:
       - name: sortie par le telephone
         run: |
           # Par son adresse Tailscale : le nom d'appareil porte des espaces.
-          sortie=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption) | .TailscaleIPs[0]][0] // empty')
+          sorties=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption and .Online) | .TailscaleIPs[0]] | join(" ")')
+          # Ne pas prendre un appareil hors ligne, ni choisir une sortie arbitraire.
+          read -ra candidats <<< "$sorties"
+          if [ "${#candidats[@]}" -gt 1 ]; then
+            echo "::error::plusieurs sorties en ligne : sélectionner uniquement le téléphone prévu"
+            exit 1
+          fi
+          sortie=${candidats[0]:-}
           if [ -z "$sortie" ]; then
             echo "::error::téléphone absent : allumé, Tailscale connecté, « Run as exit node » actif ?"
             exit 1
@@ -87,7 +130,21 @@ jobs:
           fi
           sleep 5
 
+      # Revérifier l'heure après l'attente d'un runner ou du groupe marjane.
+      - name: heure avant releve
+        id: heure
+        run: |
+          python - <<'PY'
+          from datetime import datetime
+          import os
+          from zoneinfo import ZoneInfo
+          autorise = datetime.now(ZoneInfo('Africa/Casablanca')).hour < 3
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('autorise=' + str(autorise).lower() + '\n')
+          print('nuit autorisee' if autorise else 'trop tard : aucun releve')
+          PY
       - name: run
+        if: steps.heure.outputs.autorise == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}

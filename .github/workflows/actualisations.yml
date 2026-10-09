@@ -4,18 +4,35 @@ name: actualisations
 
 on:
   schedule:
-    - cron: '0 5 * * *'
+    # Contrôle horaire : les sources ne sont lues qu'entre 00 h et 03 h au Maroc.
+    - cron: '37 * * * *'
   workflow_dispatch: {}
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: actualisations
   cancel-in-progress: false
 
 jobs:
+  garde:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.nuit.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: fenetre et historique
+        id: nuit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/garde_nuit.py --workflow actualisations.yml --jobs run
+
   run:
+    needs: garde
+    if: needs.garde.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -28,7 +45,21 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -q curl-cffi python-dotenv
+      # Revérifier l'heure après l'attente d'un runner ou du groupe marjane.
+      - name: heure avant releve
+        id: heure
+        run: |
+          python - <<'PY'
+          from datetime import datetime
+          import os
+          from zoneinfo import ZoneInfo
+          autorise = datetime.now(ZoneInfo('Africa/Casablanca')).hour < 3
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('autorise=' + str(autorise).lower() + '\n')
+          print('nuit autorisee' if autorise else 'trop tard : aucun releve')
+          PY
       - name: run
+        if: steps.heure.outputs.autorise == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
