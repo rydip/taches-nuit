@@ -1,0 +1,93 @@
+# Test ponctuel demandé par Anass. Aucun cron, aucune dépendance au PC.
+name: test-marjane-differe
+on:
+  workflow_dispatch:
+    inputs:
+      cible_utc:
+        description: 'Départ UTC ISO 8601, au maximum une heure après le lancement'
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  attente:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - name: attendre le départ demandé
+        env:
+          CIBLE_UTC: ${{ inputs.cible_utc }}
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          import os, time
+          cible = datetime.fromisoformat(os.environ['CIBLE_UTC'].replace('Z', '+00:00'))
+          if cible.tzinfo is None:
+              raise SystemExit('La cible doit porter son fuseau UTC')
+          delai = (cible - datetime.now(timezone.utc)).total_seconds()
+          if not 0 <= delai <= 3600:
+              raise SystemExit('Cible passée ou à plus d une heure : aucun relevé')
+          print('Départ demandé : ' + cible.isoformat(), flush=True)
+          while (reste := (cible - datetime.now(timezone.utc)).total_seconds()) > 0:
+              time.sleep(min(reste, 30))
+          print('Heure atteinte : lancement du job Marjane', flush=True)
+          PY
+  marjane:
+    needs: attente
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    concurrency:
+      group: marjane
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.DEPOT }}
+          token: ${{ secrets.JETON }}
+          ref: main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -q -r requirements.txt > /dev/null
+      - name: tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      - name: sortie par le telephone
+        run: |
+          sorties=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption and .Online) | .TailscaleIPs[0]] | join(" ")')
+          read -ra candidats <<< "$sorties"
+          if [ "${#candidats[@]}" -ne 1 ]; then
+            echo "::error::une seule sortie en ligne requise : téléphone connecté à Tailscale"
+            exit 1
+          fi
+          if ! err=$(sudo tailscale set --exit-node="${candidats[0]}" 2>&1); then
+            echo "::error::tailscale set : ${err:0:200}"
+            exit 1
+          fi
+          sleep 5
+      - name: vérifier le départ ponctuel
+        env:
+          CIBLE_UTC: ${{ inputs.cible_utc }}
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          import os
+          cible = datetime.fromisoformat(os.environ['CIBLE_UTC'].replace('Z', '+00:00'))
+          retard = (datetime.now(timezone.utc) - cible).total_seconds()
+          if not 0 <= retard <= 1800:
+              raise SystemExit('Départ hors du créneau de test : aucun relevé')
+          PY
+      - name: run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: bash outils/marjane_nuit.sh
+      - name: volume par le telephone
+        if: always()
+        run: |
+          tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption)][0] // empty
+            | "::notice::par le téléphone : reçu \((.RxBytes // 0) / 1048576 | floor) Mo, envoyé \((.TxBytes // 0) / 1048576 | floor) Mo"' || true
