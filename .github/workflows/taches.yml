@@ -10,6 +10,8 @@ permissions:
   contents: read
   actions: write
 
+# Un seul run à la fois dans le groupe : un run armé qui dort le garde, les
+# suivants attendent (un seul en attente, le plus récent). Ne pas annuler en cours.
 concurrency:
   group: taches
   cancel-in-progress: false
@@ -17,7 +19,12 @@ concurrency:
 jobs:
   garde:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Une exécution armée dort jusqu'à 00 h 02 (Maroc) : 242 min au plus depuis 20 h 00.
+    timeout-minutes: 260
+    permissions:
+      contents: read
+      actions: read
+      issues: write
     outputs:
       run: ${{ steps.nuit.outputs.run }}
       marjane: ${{ steps.nuit.outputs.marjane }}
@@ -84,7 +91,9 @@ jobs:
     runs-on: ubuntu-latest
     # 150 : omni ~27 min + prix 7-18 + promos un magasin a la fois ~26 + relecture
     # et reconfirmation, mesure du 8 octobre 2026 ; marge pour la latence du telephone.
-    timeout-minutes: 150
+    # 240 depuis le 10 octobre : rejeu p2 des promos (jusqu'a 59 min) et gardes de sortie ;
+    # un depassement tuerait l'etape 8 (journal). Plafond GitHub d'un job : 360.
+    timeout-minutes: 240
     concurrency:
       group: marjane
       cancel-in-progress: false
@@ -155,3 +164,22 @@ jobs:
         run: |
           tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption)][0] // empty
             | "::notice::par le téléphone : reçu \((.RxBytes // 0) / 1048576 | floor) Mo, envoyé \((.TxBytes // 0) / 1048576 | floor) Mo"' || true
+
+  # Alerte : une issue par job de relevé dont l'étape a réellement échoué.
+  # Le contrôle du matin (garde) ouvre les nuits sans aucun relevé réussi.
+  bilan:
+    needs: [run, marjane]
+    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: issue pour chaque relevé en échec
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: python .github/garde_nuit.py --workflow taches.yml --jobs run marjane --bilan

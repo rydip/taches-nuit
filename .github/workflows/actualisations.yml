@@ -12,6 +12,8 @@ permissions:
   contents: read
   actions: read
 
+# Un seul run à la fois dans le groupe : un run armé qui dort le garde, les
+# suivants attendent (un seul en attente, le plus récent). Ne pas annuler en cours.
 concurrency:
   group: actualisations
   cancel-in-progress: false
@@ -19,7 +21,12 @@ concurrency:
 jobs:
   garde:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Une exécution armée dort jusqu'à 00 h 02 (Maroc) : 242 min au plus depuis 20 h 00.
+    timeout-minutes: 260
+    permissions:
+      contents: read
+      actions: read
+      issues: write
     outputs:
       run: ${{ steps.nuit.outputs.run }}
     steps:
@@ -64,3 +71,22 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: bash outils/actualiser_promos.sh
+
+  # Alerte : une issue si le relevé de promos a réellement échoué.
+  # Le contrôle du matin (garde) ouvre les nuits sans aucun relevé réussi.
+  bilan:
+    needs: [run]
+    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: issue pour chaque relevé en échec
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: python .github/garde_nuit.py --workflow actualisations.yml --jobs run --bilan
