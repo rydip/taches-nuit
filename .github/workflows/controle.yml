@@ -1,0 +1,94 @@
+# Modèle du workflow de contrôle quotidien, à copier dans le dépôt PUBLIC
+# rydip/taches-nuit sous .github/workflows/controle.yml (même principe que
+# taches.workflow.yml). Le code reste dans le dépôt privé, lu par checkout.
+#
+# Une fois par jour, le contrôle regarde si les prix visibles restent frais
+# (scraper/controle_quotidien.py). Si une alerte sort (code 1), une issue
+# est ouverte sur le dépôt public, sans doublon : pas de nouvelle issue si
+# une issue ouverte porte déjà le même titre du jour.
+
+name: controle
+
+on:
+  schedule:
+    # 08 h 23 UTC, soit 08 h 23 au Maroc (GMT depuis le 20 septembre 2026) : après le relevé de la nuit.
+    - cron: '23 8 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+# Un seul contrôle à la fois. Ne pas annuler en cours.
+concurrency:
+  group: controle
+  cancel-in-progress: false
+
+jobs:
+  controle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.DEPOT }}
+          token: ${{ secrets.JETON }}
+          ref: main
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -q -r requirements.txt > /dev/null
+
+      # Le code de sortie fait foi : 1 = au moins une alerte. L'étape ne s'arrête
+      # pas là, pour que l'issue puisse être ouverte à l'étape suivante.
+      - name: controle des prix visibles
+        id: controle
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          PYTHONIOENCODING: utf-8
+          CONTROLE_JSON: ${{ runner.temp }}/controle.json
+        run: python -m scraper.controle_quotidien --json "$CONTROLE_JSON"
+
+      - name: issue si alerte
+        if: steps.controle.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          LIEN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONTROLE_JSON: ${{ runner.temp }}/controle.json
+        run: |
+          set -euo pipefail
+          jour=$(TZ=Africa/Casablanca date +%F)
+          titre="Contrôle quotidien Prixma du $jour : alerte"
+
+          # Pas de doublon. Comparaison en bash pur : pas de pipe vers grep, qui
+          # pourrait faire croire à une issue absente.
+          titres=$(gh issue list -R "$REPO" --state open --limit 200 --json title --jq '.[].title')
+          if [[ $'\n'"$titres"$'\n' == *$'\n'"$titre"$'\n'* ]]; then
+            echo "issue déjà ouverte : $titre"
+            exit 0
+          fi
+
+          corps="$RUNNER_TEMP/corps.md"
+          if [ -s "$CONTROLE_JSON" ]; then
+            jq -r '.texte' "$CONTROLE_JSON" > "$corps"
+          else
+            echo "Le contrôle n'a rendu aucun résumé : voir l'exécution." > "$corps"
+          fi
+          printf '\nExécution : %s\n' "$LIEN" >> "$corps"
+
+          gh issue create -R "$REPO" --title "$titre" --body-file "$corps"
+
+      # Réactive le workflow : GitHub désactive les programmations d'un dépôt public
+      # resté inactif (même principe que taches.yml).
+      - name: garder
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/controle.yml/enable" > /dev/null
