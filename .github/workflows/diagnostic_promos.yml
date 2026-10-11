@@ -2,6 +2,10 @@ name: diagnostic-promos-marjane
 on:
   workflow_dispatch:
     inputs:
+      acces_seul:
+        description: 'Vérification courte en lecture seule, sans publication'
+        type: boolean
+        default: false
       publier:
         description: 'Réparer les deux snapshots après diagnostic, sans toucher aux autres magasins'
         type: boolean
@@ -46,11 +50,18 @@ jobs:
             exit 1
           fi
           sleep 5
+          pays=$(curl -fsS -m 15 https://www.cloudflare.com/cdn-cgi/trace | sed -n 's/^loc=//p')
+          if [ "$pays" != MA ]; then
+            echo "::error::sortie marocaine non vérifiée, aucune lecture Marjane"
+            exit 1
+          fi
+          echo "sortie vérifiée : MA"
       - name: vérifier la progression publique sans journal détaillé
         run: |
           PRIXMA_PROGRESS_FD=3 python -c "from scraper.promos_locales import progression_marjane; progression_marjane(test_fd=3)" 3>&1 >/tmp/progression-privee.txt 2>&1
           test ! -s /tmp/progression-privee.txt
       - name: run
+        if: inputs.acces_seul != true
         env:
           PUBLIER: ${{ inputs.publier }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -61,11 +72,13 @@ jobs:
           else
             python -u -m sondes.diagnostic_promos_marjane --catalogues --sortie /tmp/diagnostic-promos.json
           fi
+      - name: vérifier seulement les accès
+        if: inputs.acces_seul == true
+        run: python -u -m sondes.verifier_acces_nuit --sortie /tmp/diagnostic-promos.json
       - name: volume par le telephone
         if: always()
         run: |
-          tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption)][0] // empty
-            | "::notice::par le téléphone : reçu \((.RxBytes // 0) / 1048576 | floor) Mo, envoyé \((.TxBytes // 0) / 1048576 | floor) Mo"' || true
+          tailscale status --json | python outils/volume_sortie.py
 
       - uses: actions/upload-artifact@v4
         if: always()

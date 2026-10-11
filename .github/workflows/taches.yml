@@ -191,11 +191,8 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: bash outils/marjane_nuit.sh
 
-      - name: volume par le telephone
-        if: always()
-        run: |
-          tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption)][0] // empty
-            | "::notice::par le téléphone : reçu \((.RxBytes // 0) / 1048576 | floor) Mo, envoyé \((.TxBytes // 0) / 1048576 | floor) Mo"' || true
+      # Le script mesure le pair actif avant de désactiver la sortie.
+      # Un premier candidat arbitraire après déconnexion affichait un faux 0 Mo.
 
   # Alerte : une issue par job de relevé dont l'étape a réellement échoué.
   # Le contrôle du matin (garde) ouvre les nuits sans aucun relevé réussi.
