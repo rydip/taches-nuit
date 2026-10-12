@@ -6,7 +6,12 @@ on:
   schedule:
     # Contrôle horaire : les sources ne sont lues qu'entre 00 h et 03 h au Maroc.
     - cron: '37 * * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      forcer:
+        description: 'Relevé hors fenêtre de nuit, lancé à la main'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,6 +31,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      checks: read
       issues: write
     outputs:
       run: ${{ steps.nuit.outputs.run }}
@@ -35,6 +41,7 @@ jobs:
         id: nuit
         env:
           GH_TOKEN: ${{ github.token }}
+          FORCER: ${{ github.event_name == 'workflow_dispatch' && inputs.forcer }}
         run: python .github/garde_nuit.py --workflow actualisations.yml --jobs run
 
   run:
@@ -55,15 +62,21 @@ jobs:
       # Revérifier l'heure après l'attente d'un runner ou du groupe marjane.
       - name: heure avant releve
         id: heure
+        env:
+          FORCER: ${{ github.event_name == 'workflow_dispatch' && inputs.forcer }}
         run: |
           python - <<'PY'
           from datetime import datetime
           import os
           from zoneinfo import ZoneInfo
-          autorise = datetime.now(ZoneInfo('Africa/Casablanca')).hour < 3
+          forcer = os.environ.get('FORCER') == 'true'
+          autorise = datetime.now(ZoneInfo('Africa/Casablanca')).hour < 3 or forcer
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('autorise=' + str(autorise).lower() + '\n')
-          print('nuit autorisee' if autorise else 'trop tard : aucun releve')
+          if forcer:
+              print('relevé forcé à la main')
+          else:
+              print('nuit autorisee' if autorise else 'trop tard : aucun releve')
           PY
       - name: run
         if: steps.heure.outputs.autorise == 'true'
