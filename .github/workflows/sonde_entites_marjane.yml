@@ -1,6 +1,6 @@
 # Sonde (12 octobre 2026) : une requête Marjane peut-elle rendre le stock de
 # plusieurs magasins ? Six requêtes au plus, lecture seule, par le téléphone.
-# Code : sondes/sonde_entites_marjane.py du dépôt privé. Résultats en annotations.
+# Code : sondes/sonde_entites_marjane.py du dépôt privé. Résultats en annotations. (2e passage)
 name: sonde-entites-marjane
 
 on:
