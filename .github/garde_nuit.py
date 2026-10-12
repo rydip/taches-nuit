@@ -28,6 +28,7 @@ MAROC = ZoneInfo('Africa/Casablanca')
 MAX_ESSAIS = 2
 HEURE_ARMEMENT = range(20, 24)  # 20 h 00 à 23 h 59, heure du Maroc
 MATIN = range(3, 12)            # 03 h 00 à 11 h 59, heure du Maroc
+DEBUT_SOIREE = 18               # relevé forcé à la main après 18 h : compte pour la nuit
 PAUSE_MAX = 600                 # secondes entre deux réveils de contrôle
 
 
@@ -39,6 +40,16 @@ def debut_nuit(maintenant):
 def dans_la_nuit(date, maintenant):
     local = date.astimezone(MAROC)
     return local.date() == maintenant.astimezone(MAROC).date() and local.hour < 3
+
+
+def compte_pour_la_nuit(date, maintenant):
+    """Un relevé de la nuit, ou forcé à la main la veille au soir (depuis 18 h) :
+    il compte comme un essai de la nuit qui suit, qui ne le refait pas aussitôt."""
+    if dans_la_nuit(date, maintenant):
+        return True
+    local = date.astimezone(MAROC)
+    veille = maintenant.astimezone(MAROC).date() - timedelta(days=1)
+    return local.date() == veille and local.hour >= DEBUT_SOIREE
 
 
 def choisir(maintenant, noms, historiques):
@@ -56,7 +67,7 @@ def choisir(maintenant, noms, historiques):
             if not releve or not releve.get('started_at') or releve['conclusion'] == 'skipped':
                 continue
             date = datetime.fromisoformat(releve['started_at'].replace('Z', '+00:00'))
-            if dans_la_nuit(date, maintenant):
+            if compte_pour_la_nuit(date, maintenant):
                 essais.append((job, releve))
         if any(j['status'] != 'completed' for j, _ in essais):
             decisions[nom] = (False, 'relevé déjà en cours')
