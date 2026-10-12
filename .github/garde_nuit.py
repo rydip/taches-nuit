@@ -75,6 +75,8 @@ def choisir(maintenant, noms, historiques):
             decisions[nom] = (False, 'déjà réussi cette nuit')
         elif any(j.get('arret_marjane') for j, _ in essais):
             decisions[nom] = (False, 'Marjane a bloqué cette nuit : pas de second essai')
+        elif any(j.get('arret_marjane') is None and 'arret_marjane' in j for j, _ in essais):
+            decisions[nom] = (False, 'arrêt Marjane invérifiable : aucun second essai')
         elif len(essais) >= MAX_ESSAIS:
             decisions[nom] = (False, 'deux tentatives effectuées, arrêt pour cette nuit')
         else:
@@ -133,20 +135,40 @@ def lire_jobs(run_id, lire=lire_api):
 
 def lire_historique(maintenant, workflow, lire=lire_api):
     courant = int(os.environ['GITHUB_RUN_ID'])
+    tentative = int(os.environ.get('GITHUB_RUN_ATTEMPT', '1'))
     jobs = []
     for run in lire_runs(maintenant, workflow, lire):
         if run['id'] != courant:
             jobs.extend(lire_jobs(run['id'], lire))
+        elif tentative > 1:
+            # Une réexécution conserve le même run_id : ses anciens essais comptent.
+            jobs.extend(j for j in lire_jobs(run['id'], lire)
+                        if j.get('run_attempt', tentative) < tentative)
     # Un relevé Marjane arrêté net écrit ARRET_MARJANE dans une annotation : pas de second essai.
     repo = os.environ['GITHUB_REPOSITORY']
     for job in jobs:
         if job['name'] == 'marjane' and job.get('conclusion') == 'failure':
             try:
-                annotations = lire(f'repos/{repo}/check-runs/{job["id"]}/annotations?per_page=100')
-                job['arret_marjane'] = any('ARRET_MARJANE' in (a.get('message') or '') for a in annotations)
+                # L'identifiant du job Actions n'est pas celui du check-run.
+                prefixe = f'https://api.github.com/repos/{repo}/check-runs/'
+                url = job.get('check_run_url') or ''
+                if not url.startswith(prefixe) or not url[len(prefixe):].isdigit():
+                    raise ValueError('check_run_url absent ou invalide')
+                chemin = url.removeprefix('https://api.github.com/')
+                job['arret_marjane'] = None
+                for page in range(1, 11):
+                    annotations = lire(f'{chemin}/annotations?per_page=100&page={page}')
+                    if any('ARRET_MARJANE' in (a.get('message') or '') for a in annotations):
+                        job['arret_marjane'] = True
+                        break
+                    if len(annotations) < 100:
+                        job['arret_marjane'] = False
+                        break
+                else:
+                    raise RuntimeError('annotations trop volumineuses')
             except Exception as erreur:
-                job['arret_marjane'] = False
-                print(f'avertissement : annotations du job {job["id"]} illisibles ({erreur}), second essai permis')
+                job['arret_marjane'] = None
+                print(f'avertissement : annotations du job {job["id"]} illisibles ({erreur}), second essai suspendu')
     return jobs
 
 
@@ -238,7 +260,10 @@ def controle_matin(maintenant, workflow, noms, lire=lire_api, ecrire=ecrire_api)
     reussis = set()
     for run in de_la_nuit:
         for job in lire_jobs(run['id'], lire):
-            if job['name'] in noms and releve_reussi(job):
+            releve = next((s for s in job.get('steps', []) if s['name'] == 'run'), {})
+            date = releve.get('started_at')
+            if (job['name'] in noms and releve_reussi(job) and date
+                    and compte_pour_la_nuit(datetime.fromisoformat(date.replace('Z', '+00:00')), maintenant)):
                 reussis.add(job['name'])
     label = workflow.removesuffix('.yml')
     propositions = [
