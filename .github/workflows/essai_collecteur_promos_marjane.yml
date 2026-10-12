@@ -5,7 +5,7 @@ name: essai-collecteur-promos-marjane
 
 on:
   push:
-    paths: ['.github/workflows/sonde_bruit_promos_marjane.yml']
+    paths: ['.github/workflows/essai_collecteur_promos_marjane.yml']
   workflow_dispatch: {}
 
 permissions:
