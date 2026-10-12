@@ -1,0 +1,103 @@
+# Essai (12 octobre 2026) : le vrai collecteur, filtre is_new_price, temoin force.
+# Magasins 2 et 44, ~130 requêtes, sans publication (aucun secret Supabase).
+# Code : sondes/sonde_bruit_promos_marjane.py du dépôt privé. Résultats en annotations. (2e passage)
+name: essai-collecteur-promos-marjane
+
+on:
+  push:
+    paths: ['.github/workflows/sonde_bruit_promos_marjane.yml']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marjane
+  cancel-in-progress: false
+
+jobs:
+  sonde:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.DEPOT }}
+          token: ${{ secrets.JETON }}
+          ref: main
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+
+      - run: pip install -q -r requirements.txt > /dev/null
+
+      - name: tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: sortie par le telephone
+        run: |
+          # Par son adresse Tailscale : le nom d'appareil porte des espaces.
+          sorties=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption and .Online) | .TailscaleIPs[0]] | join(" ")')
+          # Ne pas prendre un appareil hors ligne, ni choisir une sortie arbitraire.
+          read -ra candidats <<< "$sorties"
+          if [ "${#candidats[@]}" -gt 1 ]; then
+            echo "::error::plusieurs sorties en ligne : sélectionner uniquement le téléphone prévu"
+            exit 1
+          fi
+          sortie=${candidats[0]:-}
+          if [ -z "$sortie" ]; then
+            echo "::error::téléphone absent : allumé, Tailscale connecté, « Run as exit node » actif ?"
+            exit 1
+          fi
+          if ! err=$(sudo tailscale set --exit-node="$sortie" 2>&1); then
+            echo "::error::tailscale set : ${err:0:200}"
+            exit 1
+          fi
+          sleep 5
+          # Le téléphone peut être endormi par Android alors qu'il reste « en ligne » :
+          # on vérifie le pays vu depuis internet. Six essais espacés de 30 s, avec
+          # remise en place du noeud de sortie entre deux essais. Sans MA, le job
+          # échoue ici, avant toute requête vers Marjane.
+          pays_de_sortie () {
+            # Premier service, puis secours. Rien n'est écrit si aucun ne répond.
+            local p
+            p=$(curl -fsS -m 10 https://ipinfo.io/country 2>/dev/null | tr -d '[:space:]') || true
+            if [[ ! "$p" =~ ^[A-Z]{2}$ ]]; then
+              p=$(curl -fsS -m 10 https://ifconfig.co/country-iso 2>/dev/null | tr -d '[:space:]') || true
+            fi
+            if [[ "$p" =~ ^[A-Z]{2}$ ]]; then
+              echo "$p"
+            fi
+            return 0
+          }
+          pays=""
+          for essai in 1 2 3 4 5 6; do
+            if [ "$essai" -gt 1 ]; then
+              sleep 30
+              sudo tailscale set --exit-node="$sortie" > /dev/null 2>&1 || true
+            fi
+            pays=$(pays_de_sortie)
+            if [ "$pays" = "MA" ]; then
+              break
+            fi
+          done
+          if [ "$pays" != "MA" ]; then
+            echo "::error::téléphone : la sortie Tailscale ne passe pas par le Maroc (pays vu : ${pays:-inconnu}). Tailscale est probablement endormi sur le téléphone : l'ouvrir et désactiver l'optimisation de batterie."
+            exit 1
+          fi
+          echo "sortie par le telephone vérifiée : MA"
+
+
+      - name: collecteur
+        env:
+          PRIXMA_MARJANE_TEMOIN: "1"
+        run: |
+          python -u -m scraper.promos_locales --enseigne Marjane --sources marjane-2 marjane-44 > sortie.txt 2>&1 || echo "code $?" >> sortie.txt
+          grep -E "COUVERTURE|ECART|ECHEC|ARRET|promos vérifiées|code " sortie.txt | sed 's/^/::notice::/'
