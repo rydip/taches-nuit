@@ -12,6 +12,7 @@ Quatre comportements selon l'heure de départ (Maroc) :
   n'est lancé ; une issue est ouverte si aucun relevé n'a réussi pour un job.
 - 12 h à 19 h 59 : hors nuit, rien à faire.
 Mode --bilan : ouvre une issue pour chaque job de relevé en échec (variable NEEDS).
+FORCER=true (lancement manuel) : tous les relevés autorisés, sans armement ni contrôle.
 """
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -61,6 +62,8 @@ def choisir(maintenant, noms, historiques):
             decisions[nom] = (False, 'relevé déjà en cours')
         elif any(j['conclusion'] == 'success' and s['conclusion'] == 'success' for j, s in essais):
             decisions[nom] = (False, 'déjà réussi cette nuit')
+        elif any(j.get('arret_marjane') for j, _ in essais):
+            decisions[nom] = (False, 'Marjane a bloqué cette nuit : pas de second essai')
         elif len(essais) >= MAX_ESSAIS:
             decisions[nom] = (False, 'deux tentatives effectuées, arrêt pour cette nuit')
         else:
@@ -123,6 +126,16 @@ def lire_historique(maintenant, workflow, lire=lire_api):
     for run in lire_runs(maintenant, workflow, lire):
         if run['id'] != courant:
             jobs.extend(lire_jobs(run['id'], lire))
+    # Un relevé Marjane arrêté net écrit ARRET_MARJANE dans une annotation : pas de second essai.
+    repo = os.environ['GITHUB_REPOSITORY']
+    for job in jobs:
+        if job['name'] == 'marjane' and job.get('conclusion') == 'failure':
+            try:
+                annotations = lire(f'repos/{repo}/check-runs/{job["id"]}/annotations?per_page=100')
+                job['arret_marjane'] = any('ARRET_MARJANE' in (a.get('message') or '') for a in annotations)
+            except Exception as erreur:
+                job['arret_marjane'] = False
+                print(f'avertissement : annotations du job {job["id"]} illisibles ({erreur}), second essai permis')
     return jobs
 
 
@@ -240,8 +253,10 @@ def bilan(maintenant, workflow, needs, lire=lire_api, ecrire=ecrire_api):
 
 
 def planifier(workflow, noms, lire=lire_api, sommeil=time.sleep,
-              horloge=maintenant_utc, ecrire=ecrire_api):
+              horloge=maintenant_utc, ecrire=ecrire_api, forcer=False):
     """Décide pour chaque job de relevé. Retourne (décisions, issues ouvertes)."""
+    if forcer:
+        return {nom: (True, 'forcé à la main (workflow_dispatch)') for nom in noms}, []
     maintenant = horloge()
     if armer(maintenant, workflow, lire):
         attendre_minuit(maintenant, sommeil, horloge)
@@ -267,7 +282,7 @@ def main():
         for titre in bilan(maintenant_utc(), args.workflow, needs):
             print(f'issue ouverte : {titre}')
         return
-    decisions, issues = planifier(args.workflow, args.jobs)
+    decisions, issues = planifier(args.workflow, args.jobs, forcer=os.environ.get('FORCER') == 'true')
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as sortie:
         for nom, (autorise, raison) in decisions.items():
             sortie.write(f'{nom}={str(autorise).lower()}\n')
