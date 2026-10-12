@@ -96,4 +96,7 @@ jobs:
 
 
       - name: sonde
+        env:
+          SONDE_MAGASIN: "2"
+          SONDE_TRIS: "label_ascending,default"
         run: python -m sondes.sonde_pagination_marjane

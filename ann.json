@@ -1,0 +1,74 @@
+[
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/rydip/taches-nuit/blob/a134bf3c090140c988d8a0335c3d4c2ed222ab2f/.github",
+    "start_line": 19,
+    "start_column": null,
+    "end_line": 19,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "",
+    "message": "promos price_descending vs label : communes 48, seulement price_descending 0, seulement label 0",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/rydip/taches-nuit/blob/a134bf3c090140c988d8a0335c3d4c2ed222ab2f/.github",
+    "start_line": 18,
+    "start_column": null,
+    "end_line": 18,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "",
+    "message": "promos default vs label : communes 48, seulement default 0, seulement label 0",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/rydip/taches-nuit/blob/a134bf3c090140c988d8a0335c3d4c2ed222ab2f/.github",
+    "start_line": 17,
+    "start_column": null,
+    "end_line": 17,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "",
+    "message": "price_descending : {\"pages\": 34, \"lus\": 1698, \"uniques\": 1677, \"totaux\": [1698], \"doublons\": 21, \"promos_retenues\": 48}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/rydip/taches-nuit/blob/a134bf3c090140c988d8a0335c3d4c2ed222ab2f/.github",
+    "start_line": 16,
+    "start_column": null,
+    "end_line": 16,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "",
+    "message": "default : {\"pages\": 34, \"lus\": 1698, \"uniques\": 1698, \"totaux\": [1698, 1699], \"doublons\": 0, \"promos_retenues\": 48}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/rydip/taches-nuit/blob/a134bf3c090140c988d8a0335c3d4c2ed222ab2f/.github",
+    "start_line": 15,
+    "start_column": null,
+    "end_line": 15,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "",
+    "message": "label_ascending : {\"pages\": 34, \"lus\": 1699, \"uniques\": 1699, \"totaux\": [1699], \"doublons\": 0, \"promos_retenues\": 48}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/rydip/taches-nuit/blob/a134bf3c090140c988d8a0335c3d4c2ed222ab2f/.github",
+    "start_line": 1,
+    "start_column": null,
+    "end_line": 1,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "",
+    "message": "\"The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748\"",
+    "raw_details": ""
+  }
+]
