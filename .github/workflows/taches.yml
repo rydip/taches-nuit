@@ -135,18 +135,43 @@ jobs:
 
       - name: sortie par le telephone
         run: |
-          # Par son adresse Tailscale : le nom d'appareil porte des espaces.
-          sorties=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption and .Online) | .TailscaleIPs[0]] | join(" ")')
-          # Ne pas prendre un appareil hors ligne, ni choisir une sortie arbitraire.
-          read -ra candidats <<< "$sorties"
-          if [ "${#candidats[@]}" -gt 1 ]; then
-            echo "::error::plusieurs sorties en ligne : sélectionner uniquement le téléphone prévu"
-            exit 1
-          fi
-          sortie=${candidats[0]:-}
+          # Le budget de marjane_nuit.sh part de cet instant (PRIXMA_DEBUT_JOB, passé par
+          # GITHUB_ENV) : l'attente du téléphone ci-dessous est comprise dans ce budget.
+          echo "PRIXMA_DEBUT_JOB=$(date +%s)" >> "${GITHUB_ENV:-/dev/null}"
+          # Le téléphone peut être endormi, éteint ou pas encore connecté au démarrage du
+          # job : on attend jusqu'à 15 min (31 lectures, 30 s entre deux). Par son adresse
+          # Tailscale : le nom d'appareil porte des espaces.
+          sortie=""
+          essais=0
+          for lecture in $(seq 1 31); do
+            essais=$lecture
+            sorties=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption and .Online) | .TailscaleIPs[0]] | join(" ")') || sorties=""
+            # Ne pas prendre un appareil hors ligne, ni choisir une sortie arbitraire.
+            read -ra candidats <<< "$sorties"
+            if [ "${#candidats[@]}" -gt 1 ]; then
+              echo "::error::plusieurs sorties en ligne : sélectionner uniquement le téléphone prévu"
+              exit 1
+            fi
+            if [ "${#candidats[@]}" -eq 1 ]; then
+              sortie=${candidats[0]}
+              break
+            fi
+            if [ "$lecture" -eq 1 ]; then
+              echo "téléphone pas encore en ligne : nouvel essai toutes les 30 s pendant 15 min"
+            fi
+            if [ "$lecture" -lt 31 ]; then
+              sleep 30
+            fi
+          done
           if [ -z "$sortie" ]; then
+            # Diagnostic sans nom d'appareil ni adresse IP (dépôt public) : ne fait jamais échouer l'étape.
+            echo "diagnostic :"
+            tailscale status --json | jq -r '[.Peer[] | select(((.Tags // []) | index("tag:ci")) | not)] | "appareils hors runners : \(length) ; sorties déclarées : \([.[] | select(.ExitNodeOption)] | length) ; en ligne : \([.[] | select(.Online)] | length) ; vus pour la dernière fois : \([.[] | .LastSeen // "?"] | join(", "))"' || true
             echo "::error::téléphone absent : allumé, Tailscale connecté, « Run as exit node » actif ?"
             exit 1
+          fi
+          if [ "$essais" -gt 1 ]; then
+            echo "téléphone en ligne après $essais essai(s)"
           fi
           if ! err=$(sudo tailscale set --exit-node="$sortie" 2>&1); then
             echo "::error::tailscale set : ${err:0:200}"
