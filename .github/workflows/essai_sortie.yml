@@ -1,0 +1,137 @@
+# Essai de la sortie au Maroc, à lancer à la main (« Run workflow »). Il vérifie
+# que le runner rejoint le réseau Tailscale et sort par le Maroc, sans attendre la nuit.
+# Aucune requête vers une enseigne (Marjane, Aswak, Bringo, Carrefour) : seulement
+# Tailscale et les services qui donnent le pays de sortie (ipinfo.io, ifconfig.co).
+# Copie versionnée, publiée sous .github/workflows/essai_sortie.yml du dépôt
+# rydip/taches-nuit. Garder l'étape « essai de sortie » alignée sur « sortie par le
+# telephone » du job marjane de outils/taches.workflow.yml : mêmes commandes, mêmes
+# essais, même affichage.
+
+name: essai-sortie
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  essai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: essai de sortie
+        run: |
+          # Diagnostic chiffré : nombres seulement, ni nom d'appareil ni adresse.
+          diagnostic=$(tailscale status --json | jq -r '[.Peer[] | select(((.Tags // []) | index("tag:ci")) | not)] | "appareils hors runners : \(length) ; sorties déclarées : \([.[] | select(.ExitNodeOption)] | length) ; en ligne : \([.[] | select(.Online)] | length)"') || diagnostic=""
+          echo "diagnostic : ${diagnostic:-illisible}"
+          if [[ "$diagnostic" =~ déclarées\ :\ ([0-9]+) ]]; then
+            declarees=${BASH_REMATCH[1]}
+          else
+            echo "::error::diagnostic Tailscale illisible (tailscale status)"
+            exit 1
+          fi
+          if [ "$declarees" -eq 0 ]; then
+            echo "::error::aucune sortie déclarée : « Run as exit node » actif sur le téléphone ?"
+            exit 1
+          fi
+          # Premier service, puis secours. Rien n'est écrit si aucun ne répond.
+          pays_de_sortie () {
+            local p
+            p=$(curl -fsS -m 10 https://ipinfo.io/country 2>/dev/null | tr -d '[:space:]') || true
+            if [[ ! "$p" =~ ^[A-Z]{2}$ ]]; then
+              p=$(curl -fsS -m 10 https://ifconfig.co/country-iso 2>/dev/null | tr -d '[:space:]') || true
+            fi
+            if [[ "$p" =~ ^[A-Z]{2}$ ]]; then
+              echo "$p"
+            fi
+            return 0
+          }
+          # essayer <adresse> : même logique que l'étape du job marjane. Rend 0 si MA.
+          # dernier_pays ne reçoit que la forme affichée : MA, « hors du Maroc » ou « inconnu ».
+          essayer () {
+            local sortie="$1" essai pays="" err
+            if ! err=$(sudo tailscale set --exit-node="$sortie" 2>&1); then
+              # Le message peut contenir l'adresse : elle est masquée avant affichage.
+              err=${err//"$sortie"/<adresse>}
+              echo "tailscale set en echec : ${err:0:200}"
+              dernier_pays=""
+              return 1
+            fi
+            sleep 5
+            for essai in 1 2 3 4 5 6; do
+              if [ "$essai" -gt 1 ]; then
+                sleep 30
+                sudo tailscale set --exit-node="$sortie" > /dev/null 2>&1 || true
+              fi
+              pays=$(pays_de_sortie)
+              if [ "$pays" = "MA" ]; then
+                break
+              fi
+            done
+            case "$pays" in
+              MA) dernier_pays="MA" ;;
+              "") dernier_pays="inconnu" ;;
+              *) dernier_pays="hors du Maroc" ;;
+            esac
+            if [ "$pays" != "MA" ]; then
+              return 1
+            fi
+            return 0
+          }
+          sortie=""
+          ecartees=""
+          nb_essayees=0
+          pays_vus=""
+          dernier_pays=""
+          retenue_n=0
+          retenue_t=0
+          for lecture in $(seq 1 31); do
+            sorties=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption and .Online) | .TailscaleIPs[0]] | join(" ")') || sorties=""
+            # Ne pas prendre un appareil hors ligne, ni choisir une sortie arbitraire.
+            read -ra candidats <<< "$sorties"
+            total=${#candidats[@]}
+            if [ "$lecture" -eq 1 ] && [ "$total" -eq 0 ]; then
+              echo "téléphone pas encore en ligne : nouvel essai toutes les 30 s pendant 15 min"
+            fi
+            n=0
+            for ip in "${candidats[@]}"; do
+              n=$((n + 1))
+              # Une sortie écartée dans ce job n'est pas réessayée.
+              case " $ecartees " in
+                *" $ip "*) continue ;;
+              esac
+              nb_essayees=$((nb_essayees + 1))
+              if essayer "$ip"; then
+                sortie=$ip
+                retenue_n=$n
+                retenue_t=$total
+                break
+              fi
+              ecartees="$ecartees $ip"
+              pays_vus="${pays_vus:+$pays_vus, }${dernier_pays:-inconnu}"
+              echo "sortie n° $n sur $total en ligne : ${dernier_pays:-inconnu}, écartée"
+            done
+            if [ -n "$sortie" ]; then
+              break
+            fi
+            if [ "$lecture" -lt 31 ]; then
+              sleep 30
+            fi
+          done
+          if [ -n "$sortie" ]; then
+            echo "::notice::essai de sortie réussi : sortie n° $retenue_n sur $retenue_t en ligne, MA"
+            exit 0
+          fi
+          if [ "$nb_essayees" -eq 0 ]; then
+            echo "::error::aucune sortie en ligne pendant 15 min"
+          else
+            echo "::error::aucune sortie au Maroc, pays vus : ${pays_vus}"
+          fi
+          exit 1
