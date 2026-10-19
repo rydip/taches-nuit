@@ -98,6 +98,10 @@ jobs:
   # 27 septembre 2026). Ce job sort par le téléphone d'Anass au Maroc
   # (Tailscale, sortie internet) : essai du 8 octobre, pays MA, 401 au lieu
   # de 403. Job séparé : Aswak et Carrefour ne passent pas par le téléphone.
+  # Plusieurs sorties peuvent être en ligne à la fois (19 octobre 2026) : le vieux
+  # téléphone laissé à la maison (Maroc) et celui d'Anass en voyage (autre pays).
+  # L'étape « sortie par le telephone » essaie chaque sortie en ligne et retient la
+  # première qui passe par le Maroc. Voir docs/RECAP_sortie_maroc_voyage_19oct.md.
   marjane:
     needs: garde
     if: needs.garde.outputs.marjane == 'true'
@@ -141,47 +145,15 @@ jobs:
           # Le téléphone peut être endormi, éteint ou pas encore connecté au démarrage du
           # job : on attend jusqu'à 15 min (31 lectures, 30 s entre deux). Par son adresse
           # Tailscale : le nom d'appareil porte des espaces.
-          sortie=""
-          essais=0
-          for lecture in $(seq 1 31); do
-            essais=$lecture
-            sorties=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption and .Online) | .TailscaleIPs[0]] | join(" ")') || sorties=""
-            # Ne pas prendre un appareil hors ligne, ni choisir une sortie arbitraire.
-            read -ra candidats <<< "$sorties"
-            if [ "${#candidats[@]}" -gt 1 ]; then
-              echo "::error::plusieurs sorties en ligne : sélectionner uniquement le téléphone prévu"
-              exit 1
-            fi
-            if [ "${#candidats[@]}" -eq 1 ]; then
-              sortie=${candidats[0]}
-              break
-            fi
-            if [ "$lecture" -eq 1 ]; then
-              echo "téléphone pas encore en ligne : nouvel essai toutes les 30 s pendant 15 min"
-            fi
-            if [ "$lecture" -lt 31 ]; then
-              sleep 30
-            fi
-          done
-          if [ -z "$sortie" ]; then
-            # Diagnostic sans nom d'appareil ni adresse IP (dépôt public) : ne fait jamais échouer l'étape.
-            echo "diagnostic :"
-            tailscale status --json | jq -r '[.Peer[] | select(((.Tags // []) | index("tag:ci")) | not)] | "appareils hors runners : \(length) ; sorties déclarées : \([.[] | select(.ExitNodeOption)] | length) ; en ligne : \([.[] | select(.Online)] | length) ; vus pour la dernière fois : \([.[] | .LastSeen // "?"] | join(", "))"' || true
-            echo "::error::téléphone absent : allumé, Tailscale connecté, « Run as exit node » actif ?"
-            exit 1
-          fi
-          if [ "$essais" -gt 1 ]; then
-            echo "téléphone en ligne après $essais essai(s)"
-          fi
-          if ! err=$(sudo tailscale set --exit-node="$sortie" 2>&1); then
-            echo "::error::tailscale set : ${err:0:200}"
-            exit 1
-          fi
-          sleep 5
-          # Le téléphone peut être endormi par Android alors qu'il reste « en ligne » :
-          # on vérifie le pays vu depuis internet. Six essais espacés de 30 s, avec
-          # remise en place du noeud de sortie entre deux essais. Sans MA, le job
-          # échoue ici, avant toute requête vers Marjane.
+          # Plusieurs sorties peuvent être en ligne à la fois (vieux téléphone de la maison,
+          # au Maroc, et téléphone d'Anass en voyage) : chaque sortie en ligne est essayée à
+          # son tour, la première qui passe par le Maroc est retenue, les autres sont écartées
+          # pour tout le job. Affiché : MA, « hors du Maroc » ou « inconnu » ; jamais une
+          # adresse, un nom d'appareil ni un autre code pays (dépôt public).
+          # L'adresse retenue est écrite dans un fichier du runner, jamais dans GITHUB_ENV
+          # (GitHub affiche ces variables dans le journal public) : marjane_nuit.sh la relit.
+          fichier_sortie="${RUNNER_TEMP:-/tmp}/prixma_sortie"
+          : > "$fichier_sortie"
           pays_de_sortie () {
             # Premier service, puis secours. Rien n'est écrit si aucun ne répond.
             local p
@@ -194,20 +166,95 @@ jobs:
             fi
             return 0
           }
-          pays=""
-          for essai in 1 2 3 4 5 6; do
-            if [ "$essai" -gt 1 ]; then
-              sleep 30
-              sudo tailscale set --exit-node="$sortie" > /dev/null 2>&1 || true
+          essayer () {
+            # essayer <adresse> : remet le noeud de sortie sur cette adresse, attend 5 s, puis
+            # six essais de pays espacés de 30 s, avec remise en place entre deux essais.
+            # Rend 0 si le pays vu est MA. Le pays du dernier essai est gardé dans dernier_pays,
+            # déjà sous sa forme affichée : MA, « hors du Maroc » ou « inconnu ».
+            local sortie="$1" essai pays="" err
+            if ! err=$(sudo tailscale set --exit-node="$sortie" 2>&1); then
+              # Le message peut contenir l'adresse : elle est masquée avant affichage.
+              err=${err//"$sortie"/<adresse>}
+              echo "tailscale set en echec : ${err:0:200}"
+              dernier_pays=""
+              return 1
             fi
-            pays=$(pays_de_sortie)
-            if [ "$pays" = "MA" ]; then
+            sleep 5
+            # Le téléphone peut être endormi par Android alors qu'il reste « en ligne » :
+            # on vérifie le pays vu depuis internet.
+            for essai in 1 2 3 4 5 6; do
+              if [ "$essai" -gt 1 ]; then
+                sleep 30
+                sudo tailscale set --exit-node="$sortie" > /dev/null 2>&1 || true
+              fi
+              pays=$(pays_de_sortie)
+              if [ "$pays" = "MA" ]; then
+                break
+              fi
+            done
+            case "$pays" in
+              MA) dernier_pays="MA" ;;
+              "") dernier_pays="inconnu" ;;
+              *) dernier_pays="hors du Maroc" ;;
+            esac
+            if [ "$pays" != "MA" ]; then
+              return 1
+            fi
+            return 0
+          }
+          sortie=""
+          essais=0
+          ecartees=""
+          nb_essayees=0
+          pays_vus=""
+          dernier_pays=""
+          for lecture in $(seq 1 31); do
+            essais=$lecture
+            sorties=$(tailscale status --json | jq -r '[.Peer[] | select(.ExitNodeOption and .Online) | .TailscaleIPs[0]] | join(" ")') || sorties=""
+            # Ne pas prendre un appareil hors ligne, ni choisir une sortie arbitraire.
+            read -ra candidats <<< "$sorties"
+            total=${#candidats[@]}
+            if [ "$lecture" -eq 1 ] && [ "$total" -eq 0 ]; then
+              echo "téléphone pas encore en ligne : nouvel essai toutes les 30 s pendant 15 min"
+            fi
+            n=0
+            for ip in "${candidats[@]}"; do
+              n=$((n + 1))
+              # Une sortie écartée dans ce job n'est pas réessayée.
+              case " $ecartees " in
+                *" $ip "*) continue ;;
+              esac
+              nb_essayees=$((nb_essayees + 1))
+              if essayer "$ip"; then
+                echo "sortie n° $n sur $total en ligne : MA, retenue"
+                printf '%s\n' "$ip" > "$fichier_sortie"
+                sortie=$ip
+                break
+              fi
+              ecartees="$ecartees $ip"
+              pays_vus="${pays_vus:+$pays_vus, }${dernier_pays:-inconnu}"
+              echo "sortie n° $n sur $total en ligne : ${dernier_pays:-inconnu}, écartée"
+            done
+            if [ -n "$sortie" ]; then
               break
             fi
+            if [ "$lecture" -lt 31 ]; then
+              sleep 30
+            fi
           done
-          if [ "$pays" != "MA" ]; then
-            echo "::error::téléphone : la sortie Tailscale ne passe pas par le Maroc (pays vu : ${pays:-inconnu}). Tailscale est probablement endormi sur le téléphone : l'ouvrir et désactiver l'optimisation de batterie."
+          if [ -z "$sortie" ]; then
+            if [ "$nb_essayees" -eq 0 ]; then
+              # Diagnostic sans nom d'appareil ni adresse IP (dépôt public) : ne fait jamais échouer l'étape.
+              echo "diagnostic :"
+              tailscale status --json | jq -r '[.Peer[] | select(((.Tags // []) | index("tag:ci")) | not)] | "appareils hors runners : \(length) ; sorties déclarées : \([.[] | select(.ExitNodeOption)] | length) ; en ligne : \([.[] | select(.Online)] | length) ; vus pour la dernière fois : \([.[] | .LastSeen // "?"] | join(", "))"' || true
+              echo "::error::téléphone absent : allumé, Tailscale connecté, « Run as exit node » actif ?"
+            else
+              echo "::error::téléphone : la sortie Tailscale ne passe pas par le Maroc (pays vu : ${pays_vus}). Tailscale est probablement endormi sur le téléphone : l'ouvrir et désactiver l'optimisation de batterie."
+            fi
             exit 1
+          fi
+          if [ "$essais" -gt 1 ]; then
+            echo "téléphone en ligne après $essais essai(s)"
           fi
           echo "sortie par le telephone vérifiée : MA"
 
