@@ -47,7 +47,10 @@ jobs:
     needs: garde
     if: needs.garde.outputs.run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    # 200 depuis le 24 octobre 2026 (100 avant) : si Aswak echoue vers minuit,
+    # synchro_nuit.sh attend 02 h 30 (Maroc) pour le second essai, soit
+    # ~150 min de job au lieu de ~35.
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v5
         with:
