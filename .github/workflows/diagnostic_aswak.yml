@@ -1,0 +1,45 @@
+# Diagnostic du HTTP 521 d'Aswak (24 octobre 2026), à lancer à la main.
+# UNE seule requête vers Aswak, depuis un runner GitHub, sans Tailscale :
+# page 1 de l'API, 1 produit, même client que scraper/aswak.py (curl_cffi,
+# empreinte chrome). Rien n'est écrit, ni en base ni dans le dépôt.
+# 521 en journée : le serveur d'Aswak refuse la route des runners GitHub.
+# 200 en journée : la panne ne frappe que la nuit.
+# Copie versionnée, publiée sous .github/workflows/diagnostic_aswak.yml du
+# dépôt rydip/taches-nuit.
+
+name: diagnostic-aswak
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  essai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: pip install -q curl-cffi
+
+      - name: une requête vers Aswak
+        run: |
+          python - <<'PY'
+          from curl_cffi import requests
+          try:
+              r = requests.get(
+                  "https://aswakassalam.com/wp-json/wc/store/v1/products",
+                  params={"per_page": 1, "page": 1},
+                  impersonate="chrome",
+                  timeout=30,
+              )
+          except Exception as e:
+              print("erreur reseau :", type(e).__name__, e)
+          else:
+              print("statut", r.status_code)
+              for h in ("server", "cf-ray", "x-wp-total"):
+                  print(h, "=", r.headers.get(h))
+          PY
