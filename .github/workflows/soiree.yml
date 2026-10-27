@@ -1,18 +1,20 @@
 # Copie déployée dans rydip/taches-nuit/.github/workflows/soiree.yml.
-# Relevé du soir (25 octobre 2026) : une source est injoignable autour de minuit,
+# Relevé du matin (27 octobre 2026, d'abord le soir le 25) : une source est injoignable autour de minuit,
 # joignable en journée. Comme pour la nuit, tout ce qui nomme une enseigne reste
 # dans le dépôt privé (outils/soiree.sh) ; ce fichier n'en porte que l'appel.
 name: soiree
 
 on:
   schedule:
-    # 20 h 07 et 22 h 07 au Maroc, à GMT depuis le 20 septembre 2026. Le second ne fait rien si le premier a réussi.
-    - cron: '7 20 * * *'
-    - cron: '7 22 * * *'
+    # 10 h 07, 12 h 07 et 14 h 07 au Maroc, à GMT depuis le 20 septembre 2026. Les suivants ne font rien si un
+    # premier a réussi ; ils rattrapent un créneau sauté ou très retardé par GitHub (20 h 07 jamais lancé le 26 octobre).
+    - cron: '7 10 * * *'
+    - cron: '7 12 * * *'
+    - cron: '7 14 * * *'
   workflow_dispatch:
     inputs:
       forcer:
-        description: 'Relevé du soir, même déjà fait, lancé à la main'
+        description: 'Relevé du matin, même déjà fait, lancé à la main'
         type: boolean
         default: false
 
@@ -40,7 +42,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -q -r requirements.txt > /dev/null
-      # Revérifier l'heure : le relevé du soir court de 18 h à 23 h 59 au Maroc.
+      # Revérifier l'heure : le relevé du matin court de 9 h à 17 h 59 au Maroc.
       - name: heure avant releve
         id: heure
         env:
@@ -52,13 +54,13 @@ jobs:
           from zoneinfo import ZoneInfo
           forcer = os.environ.get('FORCER') == 'true'
           heure = datetime.now(ZoneInfo('Africa/Casablanca')).hour
-          autorise = 18 <= heure <= 23 or forcer
+          autorise = 9 <= heure <= 17 or forcer
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('autorise=' + str(autorise).lower() + '\n')
           if forcer:
               print('releve force a la main')
           else:
-              print('soir autorise' if autorise else 'hors du soir : aucun releve')
+              print('journee autorisee' if autorise else 'hors de la journee : aucun releve')
           PY
       - name: run
         if: steps.heure.outputs.autorise == 'true'
