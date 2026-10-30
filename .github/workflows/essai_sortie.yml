@@ -12,7 +12,8 @@ name: essai-sortie
 on:
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   essai:
@@ -127,6 +128,8 @@ jobs:
           done
           if [ -n "$sortie" ]; then
             echo "::notice::essai de sortie réussi : sortie n° $retenue_n sur $retenue_t en ligne, MA"
+            # Pour l'étape suivante, comme le job marjane : fichier du runner, jamais affiché.
+            printf '%s\n' "$sortie" > "${RUNNER_TEMP:-/tmp}/prixma_sortie"
             exit 0
           fi
           if [ "$nb_essayees" -eq 0 ]; then
@@ -135,3 +138,39 @@ jobs:
             echo "::error::aucune sortie au Maroc, pays vus : ${pays_vus}"
           fi
           exit 1
+
+      # 30 octobre 2026 : sortie partielle (outils/sortie_partielle.sh, copié sous
+      # .github/sortie_partielle.sh de ce dépôt). Seul Cloudflare passe par le téléphone ;
+      # GitHub et le reste sortent en direct. Aucune requête vers une enseigne.
+      - uses: actions/checkout@v5
+
+      - name: sortie partielle
+        run: |
+          source .github/sortie_partielle.sh
+          ok=0
+          verifier () {
+            local loc pays cf gh
+            loc=$(curl -fsS -m 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | sed -n 's/^loc=//p') || true
+            pays=$(curl -fsS -m 10 https://ipinfo.io/country 2>/dev/null | tr -d '[:space:]') || true
+            cf=$(voie_vers 104.16.0.1); gh=$(voie_vers 140.82.112.3)
+            [ "$pays" = "MA" ] && pays_aff=MA || pays_aff="hors du Maroc"
+            echo "$1 : Cloudflare voit ${loc:-rien} (voie $cf) ; hors Cloudflare : $pays_aff ; GitHub par $gh"
+            [ "$loc" = "MA" ] && [ "$cf" = "tailscale0" ] && [ "$gh" != "tailscale0" ] && [ -n "$gh" ]
+          }
+          if ! poser_sortie_partielle; then
+            echo "::error::règles de sortie partielle refusées par le noyau"
+            exit 1
+          fi
+          echo "règles posées : $(ip -4 rule show | grep -c '^51[0-9][0-9]:') en IPv4, $(ip -6 rule show | grep -c '^51[0-9][0-9]:') en IPv6"
+          verifier "après pose" || ok=1
+          sudo tailscale set --exit-node="$(head -n 1 "${RUNNER_TEMP:-/tmp}/prixma_sortie")" > /dev/null 2>&1 || echo "remise du noeud en échec"
+          sleep 5
+          echo "règles après remise du noeud : $(ip -4 rule show | grep -c '^51[0-9][0-9]:') en IPv4"
+          verifier "après remise du noeud" || ok=1
+          retirer_sortie_partielle
+          echo "règles après retrait : $(ip -4 rule show | grep -c '^51[0-9][0-9]:')"
+          if [ "$ok" -ne 0 ]; then
+            echo "::error::sortie partielle incorrecte"
+            exit 1
+          fi
+          echo "::notice::sortie partielle correcte : Cloudflare par le Maroc, GitHub en direct"
