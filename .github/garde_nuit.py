@@ -11,7 +11,7 @@ Quatre comportements selon l'heure de départ (Maroc) :
 - 03 h à 11 h 59 : contrôle du matin sur la nuit qui vient de finir. Aucun relevé
   n'est lancé ; une issue est ouverte si aucun relevé n'a réussi pour un job.
 - 12 h à 19 h 59 : hors nuit, rien à faire.
-Mode --bilan : ouvre une issue pour chaque job de relevé en échec (variable NEEDS).
+Mode --bilan : ouvre une issue pour chaque job de relevé en échec ou annulé (variable NEEDS).
 FORCER=true (lancement manuel) : tous les relevés autorisés, sans armement ni contrôle.
 """
 import argparse
@@ -276,14 +276,14 @@ def controle_matin(maintenant, workflow, noms, lire=lire_api, ecrire=ecrire_api)
 
 
 def bilan(maintenant, workflow, needs, lire=lire_api, ecrire=ecrire_api):
-    """Une issue par job de relevé dont l'étape a réellement échoué."""
+    """Une issue par job de relevé en échec, ou annulé par GitHub (traité comme un échec)."""
     nuit = maintenant.astimezone(MAROC).date().isoformat()
     label = workflow.removesuffix('.yml')
     propositions = [
         (f'Nuit du {nuit} : {label}/{nom} en échec',
          f'Le relevé `{label}/{nom}` a échoué pendant la nuit du {nuit}. '
          f'Exécution : {lien_run()}')
-        for nom, etat in needs.items() if etat.get('result') == 'failure'
+        for nom, etat in needs.items() if etat.get('result') in ('failure', 'cancelled')
     ]
     return ouvrir_issues(propositions, lire, ecrire)
 
