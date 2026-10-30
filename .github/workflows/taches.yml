@@ -85,11 +85,23 @@ jobs:
               print('nuit autorisee' if autorise else 'trop tard : aucun releve')
           PY
       - name: run
+        id: releve
         if: steps.heure.outputs.autorise == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: bash outils/synchro_nuit.sh
+
+      # 30 octobre 2026 : même annulation par GitHub que le job marjane (01 h 59).
+      # Placée avant « garder » : garder reste la dernière étape.
+      - name: fil de suivi si interrompu
+        if: cancelled() || (failure() && steps.releve.outcome != 'failure')
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          [ -f scraper/signaler.py ] || exit 0
+          timeout 30 python -m scraper.signaler --source "Carrefour et Aswak" --niveau alerte --message "relevé interrompu avant sa fin (job ${{ job.status }}) : aucun message de fin. Relancer à la main (taches, forcer) si la nuit est passée." || true
 
       - name: garder
         if: always()
@@ -281,20 +293,35 @@ jobs:
               print('nuit autorisee' if autorise else 'trop tard : aucun releve')
           PY
       - name: run
+        id: releve
         if: steps.heure.outputs.autorise == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: bash outils/marjane_nuit.sh
 
+      # 30 octobre 2026 : GitHub a annulé ce job à 01 h 59, pendant l'étape run, sans
+      # message de fin. Cette étape tourne après une annulation ou un échec. Sans
+      # scraper/ (annulation avant le checkout), elle ne fait rien.
+      - name: fil de suivi si interrompu
+        if: cancelled() || (failure() && steps.releve.outcome != 'failure')
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          [ -f scraper/signaler.py ] || exit 0
+          timeout 30 python -m scraper.signaler --source "Marjane" --niveau alerte --message "relevé interrompu avant sa fin (job ${{ job.status }}) : aucun message de fin. Relancer à la main (taches, forcer) si la nuit est passée." || true
+
       # Le script mesure le pair actif avant de désactiver la sortie.
       # Un premier candidat arbitraire après déconnexion affichait un faux 0 Mo.
 
-  # Alerte : une issue par job de relevé dont l'étape a réellement échoué.
+  # Alerte : une issue par job de relevé en échec ou annulé par GitHub.
+  # 30 octobre 2026 : un job annulé (result « cancelled », pas « failure ») ne
+  # déclenchait pas ce bilan ; garde_nuit.py --bilan le traite désormais comme un échec.
   # Le contrôle du matin (garde) ouvre les nuits sans aucun relevé réussi.
   bilan:
     needs: [run, marjane]
-    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
