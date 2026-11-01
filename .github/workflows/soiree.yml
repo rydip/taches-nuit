@@ -46,17 +46,18 @@ jobs:
           cache: pip
       - run: pip install -q -r requirements.txt > /dev/null
       # Revérifier l'heure : le relevé du jour court de 9 h à 18 h 59 au Maroc (créneau de 18 h 07 compris).
+      # Heure lue en UTC : le Maroc est à GMT depuis le 20 septembre 2026, mais la base de fuseaux de
+      # la machine GitHub le croit encore à UTC+1 (départ de 18 h 28 refusé le 31 octobre).
       - name: heure avant releve
         id: heure
         env:
           FORCER: ${{ github.event_name == 'workflow_dispatch' && inputs.forcer }}
         run: |
           python - <<'PY'
-          from datetime import datetime
+          from datetime import datetime, timezone
           import os
-          from zoneinfo import ZoneInfo
           forcer = os.environ.get('FORCER') == 'true'
-          heure = datetime.now(ZoneInfo('Africa/Casablanca')).hour
+          heure = datetime.now(timezone.utc).hour
           autorise = 9 <= heure <= 18 or forcer
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('autorise=' + str(autorise).lower() + '\n')
