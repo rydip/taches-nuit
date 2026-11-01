@@ -1,0 +1,46 @@
+# Copie déployée dans rydip/taches-nuit/.github/workflows/observatoire.yml.
+# Calcul quotidien de l'Observatoire Prima, à 15 h 17 heure du Maroc (GMT depuis le 20 septembre 2026).
+# Comme pour le relevé du jour, rien ici ne nomme une enseigne : le calcul, sa méthode et son détail
+# restent dans le dépôt privé (outils/observatoire.sh, scraper/observatoire.py). Ce fichier n'en porte que l'appel.
+name: observatoire
+
+on:
+  schedule:
+    - cron: '17 15 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+# Un seul calcul à la fois. Ne pas annuler en cours.
+concurrency:
+  group: observatoire
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.DEPOT }}
+          token: ${{ secrets.JETON }}
+          ref: main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -q -r requirements.txt > /dev/null
+      - name: run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: bash outils/observatoire.sh
+
+      - name: garder
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/observatoire.yml/enable" > /dev/null
