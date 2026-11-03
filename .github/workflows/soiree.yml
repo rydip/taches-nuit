@@ -6,9 +6,15 @@ name: soiree
 
 on:
   schedule:
-    # 10 h 07, 12 h 07, 14 h 07, 16 h 07 et 18 h 07 au Maroc, à GMT depuis le 20 septembre 2026. Le catalogue et les
+    # Toutes les deux heures de 4 h 07 à 18 h 07 au Maroc, à GMT depuis le 20 septembre 2026. Le catalogue et les
     # promos ont chacun leur état : une partie réussie aujourd'hui n'est pas refaite, un créneau de reprise ne
-    # relance que ce qui a échoué. Les créneaux de reprise rattrapent un créneau sauté ou retardé par GitHub.
+    # relance que ce qui a échoué. GitHub lance ces créneaux en retard (5 h 30 le 31 octobre, 6 h 40 le
+    # 1er novembre, plus de 10 h le 2) : le 2 novembre, les quatre créneaux lancés sont partis de 20 h 15 à
+    # 23 h 27, tous hors de la journée, et aucun relevé n'a eu lieu. Les créneaux de 4 h 07 à 8 h 07 visent la
+    # journée malgré ce retard ; partis à l'heure, ils ne font rien (garde ci-dessous, avant tout pip install).
+    - cron: '7 4 * * *'
+    - cron: '7 6 * * *'
+    - cron: '7 8 * * *'
     - cron: '7 10 * * *'
     - cron: '7 12 * * *'
     - cron: '7 14 * * *'
@@ -44,8 +50,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -q -r requirements.txt > /dev/null
-      # Revérifier l'heure : le relevé du jour court de 9 h à 18 h 59 au Maroc (créneau de 18 h 07 compris).
+      # Revérifier l'heure : le relevé du jour court de 9 h à 21 h 59 au Maroc (jusqu'à 18 h 59 avant le
+      # 3 novembre 2026). La source a répondu à 20 h 53 le 25 octobre et refusé à 23 h 46 le 26.
+      # Lue avant le pip install : un créneau hors de la journée s'arrête en quelques secondes.
       - name: heure avant releve
         id: heure
         env:
@@ -57,7 +64,7 @@ jobs:
           from zoneinfo import ZoneInfo
           forcer = os.environ.get('FORCER') == 'true'
           heure = datetime.now(ZoneInfo('Africa/Casablanca')).hour
-          autorise = 9 <= heure <= 18 or forcer
+          autorise = 9 <= heure <= 21 or forcer
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('autorise=' + str(autorise).lower() + '\n')
           if forcer:
@@ -65,6 +72,8 @@ jobs:
           else:
               print('journee autorisee' if autorise else 'hors de la journee : aucun releve')
           PY
+      - if: steps.heure.outputs.autorise == 'true'
+        run: pip install -q -r requirements.txt > /dev/null
       - name: run
         if: steps.heure.outputs.autorise == 'true'
         env:
